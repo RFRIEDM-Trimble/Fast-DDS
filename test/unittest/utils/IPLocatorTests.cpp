@@ -159,11 +159,12 @@ TEST_F(IPLocatorTests, setIPv6_from_string_empty)
     {
         "::",
         "::0",
-        "0000000::",
         "0::0",
         "0:0:0:0::0:0",
         "0000::0000",
-        "0000:0000:0000:0000:0000:0000:0000:0000"
+        "0000:0000:0000:0000:0000:0000:0000:0000",
+        "::0000",
+        "0000::"
     };
 
     for (std::string s : str_vec)
@@ -173,6 +174,15 @@ TEST_F(IPLocatorTests, setIPv6_from_string_empty)
         {
             ASSERT_EQ(locator.address[i], vec[i]);
         }
+    }
+
+    str_vec.clear();
+    str_vec.push_back("0000000::");
+    str_vec.push_back("0000000");
+    str_vec.push_back("::00000");
+    for (std::string s : str_vec)
+    {
+        ASSERT_FALSE(IPLocator::setIPv6(locator, s));
     }
 }
 

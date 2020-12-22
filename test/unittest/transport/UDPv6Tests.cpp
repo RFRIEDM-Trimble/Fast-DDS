@@ -51,11 +51,12 @@ uint16_t get_port()
     return port;
 }
 
-void reset_locator_address(Locator_t& locator)
+void reset_locator_address(
+        Locator_t& locator)
 {
     for (size_t i = 0; i < 16; ++i)
     {
-       locator.address[i] = 0;
+        locator.address[i] = 0;
     }
 }
 
@@ -162,25 +163,25 @@ TEST_F(UDPv6Tests, conversion_to_ip6_string)
     ASSERT_EQ("2001:db8:a::1000", IPLocator::toIPv6string(locator));
     locator.address[14] = 0;
 
-    locator.address[13]=0x01;
+    locator.address[13] = 0x01;
     ASSERT_EQ("2001:db8:a::1:0", IPLocator::toIPv6string(locator));
-    locator.address[13]=0x10;
+    locator.address[13] = 0x10;
     ASSERT_EQ("2001:db8:a::10:0", IPLocator::toIPv6string(locator));
     locator.address[13] = 0;
 
     // 2001:db8:a:0:0:1:0:0 special case for two equal compressible blocks
     // When this occurs, it's recommended to collapse the left
-    locator.address[11]=0x01;
+    locator.address[11] = 0x01;
     ASSERT_EQ("2001:db8:a::1:0:0", IPLocator::toIPv6string(locator));
-    locator.address[11]=0;
+    locator.address[11] = 0;
 
-    locator.address[9]=0x01;
+    locator.address[9] = 0x01;
     ASSERT_EQ("2001:db8:a:0:1::", IPLocator::toIPv6string(locator));
-    locator.address[9]=0;
+    locator.address[9] = 0;
 
-    locator.address[7]=0x01;
+    locator.address[7] = 0x01;
     ASSERT_EQ("2001:db8:a:1::", IPLocator::toIPv6string(locator));
-    locator.address[7]=0;
+    locator.address[7] = 0;
 }
 
 

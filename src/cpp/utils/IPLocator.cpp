@@ -19,6 +19,9 @@
 
 #include <fastrtps/utils/IPLocator.h>
 #include <fastrtps/utils/IPFinder.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+
 
 namespace eprosima {
 namespace fastrtps {
@@ -189,192 +192,42 @@ bool IPLocator::setIPv6(
         Locator_t& locator,
         const std::string& ipv6)
 {
-    /* An IPv6 must contain 16 bytes of information
-     * These bytes are given by a string of 8 numbers of 4 digits in hexadecimal format separed by ':'
-     * The string to store this info is not unique, as it could be transform in two different ways:
-     *  1. Erasing leading zeros forwarding each number
-     *     00X = X
-     *  2. Encapsulating following blocks of zeros as leaving empty an space
-     *     X:0000:0000:Y = X::Y
-     *
-     * This fcuntion implements the following:
-     *  1. Check if the string is in correct format : IPv6isCorrect
-     *  2. Analyze the string to know if:
-     *      - it starts with blocks of zeros
-     *      - it ends with blocks of zeros
-     *      - it has blocks of zeros in the middle
-     *    and it stores the size of the zeros block to build the address afterwards
-     *  3. Build the bytes array by reading the string or either filling with 0 the zero blocks
-     * */
-
     if (!IPv6isCorrect(ipv6))
     {
         // ERROR
         // Does not send a log for avoid API functionallity break
+        std::cout << "ipv6 incorrect" << std::endl;
         return false;
     }
 
     LOCATOR_ADDRESS_INVALID(locator.address);
-    uint16_t count = (uint16_t) std::count_if( ipv6.begin(), ipv6.end(), []( char c )
-                    {
-                        return c == ':';
-                    }); // C type cast to avoid Windows warnings
-
-    uint16_t initial_zeros = 0, final_zeros = 0, position_zeros = 0, number_zeros = 0;
-    size_t aux, aux_prev; // This must be size_t as string::npos could change value depending on size_t size
-
-    // Check whether is a zero block and where
-    if (ipv6.at(0) == ':')
+    struct addrinfo hints;
+    memset(&hints, 0x00, sizeof(hints));
+    hints.ai_flags = AI_NUMERICHOST;
+    // Expect only IPv6
+    hints.ai_family = AF_INET6;
+    struct addrinfo* res = NULL;
+    getaddrinfo(ipv6.c_str(), NULL, &hints, &res);
+    if (res->ai_family != AF_INET6)
     {
-        // First element equal : -> starts with zeros
-        if (ipv6.at(ipv6.size() - 1) == ':')
-        {
-            // Empty string (we already know it is a correct ipv6 format)
-            initial_zeros = 16;
-        }
-        else
-        {
-            // Calculate number of 0 blocks by the number of ':'
-            // 2 ':' at the beggining => - 2
-            // 7 std : => 7 - count
-            // 2 bytes per string => * 2
-            initial_zeros = (7 - (count - 2)) * 2;
-        }
+        std::cout << "ERROR Family " << res->ai_family << std::endl;
+        return false;
     }
-    else if (ipv6.at(ipv6.size() - 1) == ':')
+    if (res->ai_addrlen != sizeof(sockaddr_in6))
     {
-        // Last element equal : -> ends with zeros
-        // It does not start with :: (previous if)
-        final_zeros = (7 - (count - 2)) * 2;
-    }
-    else
-    {
-        // It does not starts or ends with zeros, but it could have :: in the middle or not have it
-        aux_prev = ipv6.size(); // Aux could be 1 so this number must be unreacheable
-        aux = ipv6.find(':'); // Index of first ':'
-
-        // Look for "::" will loop string twice
-        // Therefore, we use this loop that will go over less or equal once
-        while (aux != std::string::npos)
-        {
-            if (aux_prev == aux - 1)
-            {
-                // Found "::"". Store the size of the block
-                number_zeros = (7 - (count - 1)) * 2;
-                break;
-            }
-
-            // Not "::" found, keep searching in next ':'
-            position_zeros += 2; // It stores the point where the 0 block is
-            aux_prev = aux;
-            aux = ipv6.find(':', aux + 1);
-        }
+        std::cout << "ERROR Length" << std::endl;
+        return false;
     }
 
-    char punct;
-    std::stringstream ss;
-    ss << std::hex << ipv6;
-    uint16_t i;
-    uint32_t input_aux; // It cannot be uint16_t or we could not find wether the input number is bigger than allowed
+    struct sockaddr_in6* sa6 = (struct sockaddr_in6*) res->ai_addr;
+    struct in6_addr* i6a = &sa6->sin6_addr;
 
-    // Build the bytes string knowing already if there is a zero block, where and which size
-    if (initial_zeros != 0)
+    for (int i = 0; i < 16; i++)
     {
-        // Zero block at the begginning
-        for (i = 0; i < initial_zeros;)
-        {
-            locator.address[i++] = 0;
-        }
-
-        ss >> punct;
-
-        for (; i < 16;)
-        {
-            ss >> punct >> input_aux;
-            if (input_aux >= 65536)
-            {
-                return false;
-            }
-            locator.address[i++] = octet(input_aux >> 8);
-            locator.address[i++] = octet(input_aux & 0xFF);
-        }
-
-        // In the case of empty ip it would be still a ':' without parsing
-        if (initial_zeros == 16)
-        {
-            ss >> punct;
-        }
-    }
-    else if (final_zeros != 0)
-    {
-        // Zero block at the end
-        for (i = 0; i < 16 - final_zeros;)
-        {
-            ss >> input_aux >> punct;
-            if (input_aux >= 65536)
-            {
-                return false;
-            }
-            locator.address[i++] = octet(input_aux >> 8);
-            locator.address[i++] = octet(input_aux & 0xFF);
-        }
-
-        ss >> punct;
-
-        for (; i < 16;)
-        {
-            locator.address[i++] = 0;
-        }
-    }
-    else if (number_zeros != 0)
-    {
-        // Zero block in the middle
-        for (i = 0; i < position_zeros;)
-        {
-            ss >> input_aux >> punct;
-            if (input_aux >= 65536)
-            {
-                return false;
-            }
-            locator.address[i++] = octet(input_aux >> 8);
-            locator.address[i++] = octet(input_aux & 0xFF);
-        }
-
-        for (; i < position_zeros + number_zeros;)
-        {
-            locator.address[i++] = 0;
-        }
-
-        for (; i < 16;)
-        {
-            ss >> punct >> input_aux;
-            if (input_aux >= 65536)
-            {
-                return false;
-            }
-            locator.address[i++] = octet(input_aux >> 8);
-            locator.address[i++] = octet(input_aux & 0xFF);
-        }
-    }
-    else
-    {
-        // No zero block
-        ss >> input_aux;
-        locator.address[0] = octet(input_aux >> 8);
-        locator.address[1] = octet(input_aux & 0xFF);
-        for (i = 2; i < 16;)
-        {
-            ss >> punct >> input_aux;
-            if (input_aux >= 65536)
-            {
-                return false;
-            }
-            locator.address[i++] = octet(input_aux >> 8);
-            locator.address[i++] = octet(input_aux & 0xFF);
-        }
+        locator.address[i] = i6a->s6_addr[i];
     }
 
-    return ss.rdbuf()->in_avail() == 0;
+    return true;
 }
 
 bool IPLocator::setIPv6(
@@ -403,40 +256,51 @@ bool IPLocator::hasIPv6(
 std::string IPLocator::toIPv6string(
         const Locator_t& locator)
 {
+    std::string INVALID_IP = "";
     std::stringstream ss;
     ss << std::hex;
-    bool already_compress = false, in_compress = false;
+
     for (int i = 0; i != 16; i += 2)
     {
-        if (locator.address[i] == 0 && locator.address[i + 1] == 0)
+        auto field = (locator.address[i] << 8) + locator.address[i + 1];
+        ss << field;
+        if (i != 14)
         {
-            if (!in_compress && !already_compress)
-            {
-                already_compress = true;
-                in_compress = true;
-                ss << ":";
-                if (i == 0)
-                {
-                    ss << ":";
-                }
-            }
+            ss << ":";
         }
-        else
+    }
+    struct addrinfo hints;
+    memset(&hints, 0x00, sizeof(hints));
+    hints.ai_flags = AI_NUMERICHOST;
+    // Expect only IPv6
+    hints.ai_family   = AF_INET6;
+
+
+    std::string a = ss.str();
+    const char* s = a.c_str();
+
+    struct addrinfo* res;
+    int ret = getaddrinfo(s, NULL, &hints, &res);
+    if (ret != 0)
+    {
+        std::cout << "ERROR: " << ret << ":" << gai_strerror(ret) << std::endl;
+        return INVALID_IP;
+    }
+
+    struct addrinfo* rp;
+    char ipaddr[INET6_ADDRSTRLEN];
+    for (rp = res; rp != NULL; rp = rp->ai_next)
+    {
+
+        ret = getnameinfo(rp->ai_addr, rp->ai_addrlen, ipaddr, sizeof(ipaddr), 0, 0, NI_NUMERICHOST);
+        if (ret != 0)
         {
-            in_compress = false;
-            auto field = (locator.address[i] << 8) + locator.address[i + 1];
-            if (i != 14)
-            {
-                ss << field << ":";
-            }
-            else
-            {
-                ss << field;
-            }
+            //std::cout << "ERROR: " << ret << ":" << gai_strerror(ret) <<std::endl;
+            return INVALID_IP;
         }
     }
 
-    return ss.str();
+    return ipaddr;
 }
 
 bool IPLocator::copyIPv6(
@@ -851,55 +715,19 @@ bool IPLocator::isEmpty(
 bool IPLocator::IPv6isCorrect(
         const std::string& ipv6)
 {
-    /* An incorrect IPv6 format could be because:
-     *  1. it has not ':' - bad format
-     *  2. it has just one ':' - not enough info
-     *  3. it has more than 8 ':' - too much info
-     *  4. it has 8 ':' - it could only happen if it starts or ends with "::", if not is too much bytes
-     *  5. it has more than one "::" - impossible to build the ip because unknown size of zero blocks
-     *  6. it starts with ':' - it must be doble ("::") - bad format
-     *  7. it ends with ':' - it must be doble ("::") - bad format
-     * */
-    std::ptrdiff_t count = std::count_if( ipv6.begin(), ipv6.end(), []( char c )
-                    {
-                        return c == ':';
-                    });
+    struct addrinfo hints;
+    memset(&hints, 0x00, sizeof(hints));
+    hints.ai_flags = AI_NUMERICHOST;
+    // Expect only IPv6
+    hints.ai_family   = AF_INET6;
 
-    // proper number of :
-    if (count < 2 || count > 8)
+    struct addrinfo* res;
+    int ret = getaddrinfo(ipv6.c_str(), NULL, &hints, &res);
+    if (ret != 0 )
     {
-        return false;
+        std::cout << "ERROR: " << ret << ":" << gai_strerror(ret) << " for << " << ipv6 << std::endl;
     }
-
-    // only case of 8 : is with a :: at the beggining or end
-    if (count == 8 && (ipv6.at(0) != ':' && ipv6.at(ipv6.size() - 1) != ':'))
-    {
-        return false;
-    }
-
-    // only one :: is allowed
-    size_t ind = ipv6.find("::");
-    if (ind != std::string::npos)
-    {
-        if (ipv6.find("::", ind + 1) != std::string::npos)
-        {
-            return false;
-        }
-    }
-
-    // does not start with only one ':'
-    if (ipv6.at(0) == ':' && ipv6.at(1) != ':')
-    {
-        return false;
-    }
-
-    // does not end with only one ':'
-    if (ipv6.at(ipv6.size() - 1) == ':' && ipv6.at(ipv6.size() - 2) != ':')
-    {
-        return false;
-    }
-
-    return true;
+    return (ret == 0);
 }
 
 bool IPLocator::setIPv4address(
